@@ -2,7 +2,7 @@
  * OpenTelemetry Instrumentation Setup
  *
  * Initializes NodeSDK with:
- * - Traces  → ConsoleSpanExporter (dev only)
+ * - Traces  → OTLPTraceExporter  → Grafana Alloy (port 4311) → Tempo
  * - Metrics → OTLPMetricExporter → Grafana Alloy (port 4311) → Prometheus
  * - Logs    → OTLPLogExporter    → Grafana Alloy (port 4311) → Loki
  *
@@ -10,7 +10,7 @@
  */
 
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import { ConsoleSpanExporter } from '@opentelemetry/sdk-trace-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
@@ -38,7 +38,9 @@ const sdk = new NodeSDK({
     'service.deployment':  process.env.SERVICE_DEPLOYMENT || 'local',
     'service.instance.id': `${serviceName}-instance-${hostname()}`,
   }),
-  traceExporter: new ConsoleSpanExporter(),
+  traceExporter: new OTLPTraceExporter({
+    url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4311'}/v1/traces`,
+  }),
   metricReader: new PeriodicExportingMetricReader({
     exporter: new OTLPMetricExporter({ url: `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4311'}/v1/metrics` }),
     exportIntervalMillis: 15000,
@@ -50,7 +52,7 @@ const sdk = new NodeSDK({
 });
 
 sdk.start();
-console.log('✅ OpenTelemetry SDK initialized — logs → Alloy → Loki | metrics → Alloy → Prometheus');
+console.log('✅ OpenTelemetry SDK initialized — traces → Alloy → Tempo | logs → Alloy → Loki | metrics → Alloy → Prometheus');
 
 async function shutdown() {
   await sdk.shutdown();

@@ -17,61 +17,11 @@ import './src/instrumentation';
 import express, { Request, Response } from 'express';
 import * as logger from './src/logger';
 import * as appMetrics from './src/metrics';
+import { getClientContext } from './src/context';
+import { tracer } from './src/tracer';
 
 const app = express();
 const PORT = 4000;
-
-/**
- * Extract structured client + HTTP context from an incoming request.
- * All fields go into log attributes — no extra npm packages needed.
- */
-function getClientContext(req: Request, handlerType: string = 'REST') {
-  const ua = req.headers['user-agent'] || '';
-  const ip = (req.ip || '').replace(/^::ffff:/, '');
-
-  const browser =
-    ua.includes('Edg')     ? 'Edge'    :
-    ua.includes('Chrome')  ? 'Chrome'  :
-    ua.includes('Firefox') ? 'Firefox' :
-    ua.includes('Safari')  ? 'Safari'  : 'Unknown';
-
-  const browserVersionMatch =
-    ua.match(/Edg\/([\d.]+)/)     ||
-    ua.match(/Chrome\/([\d.]+)/)  ||
-    ua.match(/Firefox\/([\d.]+)/) ||
-    ua.match(/Version\/([\d.]+)/);
-  const browserVersion = browserVersionMatch?.[1] || '';
-
-  const os =
-    ua.includes('Windows')                          ? 'Windows' :
-    ua.includes('Macintosh')                        ? 'macOS'   :
-    ua.includes('Android')                          ? 'Android' :
-    ua.includes('iPhone') || ua.includes('iPad')   ? 'iOS'     :
-    ua.includes('Linux')                            ? 'Linux'   : 'Unknown';
-
-  const device = /Mobile|Android|iPhone|iPad/.test(ua) ? 'mobile' : 'desktop';
-
-  const ipParts = ip.split('.');
-  const ipAnonymized = ipParts.length === 4
-    ? `${ipParts[0]}.${ipParts[1]}.xx.xx`
-    : ip;
-
-  return {
-    'http.hostname':          req.hostname,
-    'http.route':             req.path,
-    'http.method':            req.method,
-    'client.browser':         browser,
-    'client.browser_version': browserVersion,
-    'client.os':              os,
-    'client.device':          device,
-    'client.ip_anonymized':   ipAnonymized,
-    'client.country':         '',   // populated when GeoIP is available
-    'express.route':          req.path,
-    'express.handler_type':   handlerType,
-    'user.id':                '',   // populated when auth is available
-    'user.name':              '',   // populated when auth is available
-  };
-}
 
 /**
  * Add multiple numbers
@@ -168,8 +118,14 @@ app.get('/add', (req: Request, res: Response) => {
       });
     }
 
-    // Calculate sum
-    const result = addNumbers(numbers);
+    // Calculate sum — wrapped in a custom child span visible in Tempo
+    const result = tracer.startActiveSpan('add-numbers', (span) => {
+      span.setAttribute('input.count', numbers.length);
+      const value = addNumbers(numbers);
+      span.setAttribute('output.result', value);
+      span.end();
+      return value;
+    });
 
     const durationMs = Date.now() - startTime;
     appMetrics.addRequestsInFlight.add(-1);
